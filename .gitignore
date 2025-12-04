@@ -1,1 +1,3 @@
 .env*
+*.plk
+__pycache__
