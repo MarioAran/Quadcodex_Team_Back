@@ -9,7 +9,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 # ================================
 # CONFIG
 # ================================
-MODEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modelo_gym.pkl")
+MODEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../Data/modelo_gym.pkl")
 
 corrMatrix = None
 df = None
@@ -61,8 +61,8 @@ def entrenar_modelo(force=False):
 
     base_path = os.getcwd()
 
-    mega_file = os.path.join(base_path, "Data", "megaGymDataset.csv")
-    ratings_file = os.path.join(base_path, "Data", "usuarios_ejercicios_valoraciones.csv")
+    mega_file = os.path.join(base_path, "..", "Data", "megaGymDataset.csv")
+    ratings_file = os.path.join(base_path, "..", "Data", "usuarios_ejercicios_valoraciones.csv")
 
     if not force and os.path.exists(MODEL_FILE):
         print("### Cargando modelo desde archivo...")
@@ -89,8 +89,9 @@ def entrenar_modelo(force=False):
     ratings_df["valoracion"] = ratings_df["valoracion"].fillna(1)
 
     df = pd.DataFrame({
-        "Exercise_Name": gym["Title"],
-        "muscles": gym["BodyPart"].apply(clean_muscles)
+    "Exercise_Name": gym["Title"],
+    "muscles": gym["BodyPart"].apply(clean_muscles),
+    "Level": gym["Level"] if "Level" in gym.columns else gym["Difficulty"]
     })
 
     df = df[df["muscles"].map(len) > 0]
@@ -130,11 +131,7 @@ def entrenar_modelo(force=False):
 # ================================
 # RECOMENDAR (POR GRUPO)
 # ================================
-def recomendar_por_grupo(
-    user_data,
-    user_priorities,
-    exercises_per_group=5
-):
+def recomendar_ejercicios(user_data, nivel_usuario="Beginner", ejercicios_a_recomendar=15):
 
     global corrMatrix, df, ratings_df, mlb, feature_matrix
 
@@ -143,7 +140,9 @@ def recomendar_por_grupo(
 
     df = df.copy()
 
-    # ========== SIMILITUD CON USUARIOS ==========
+    # ================================
+    # 1. SIMILITUD CON OTROS USUARIOS
+    # ================================
     ratings_df["genero"] = ratings_df["genero"].map({"male": 1, "female": 0})
 
     user_vec = np.array([
@@ -164,48 +163,50 @@ def recomendar_por_grupo(
 
     df["rating_score"] = df["id_ejercicio"].map(weighted).fillna(0)
 
-    # ========== SIMILITUD POR MUSCULOS ==========
-    user_vector = np.zeros(len(mlb.classes_))
-
-    for muscle, prio in user_priorities.items():
-        if muscle in mlb.classes_:
-            idx = list(mlb.classes_).index(muscle)
-            user_vector[idx] = prio
-
-    content_sim = cosine_similarity([user_vector], feature_matrix)[0]
+    # ================================
+    # 2. SIMILITUD POR CONTENIDO
+    # ================================
+    content_sim = cosine_similarity(feature_matrix, feature_matrix).mean(axis=1)
     df["content_sim"] = content_sim
 
-    # ========= NORMALIZAR =========
+    # ================================
+    # 3. NORMALIZAR Y SCORE FINAL
+    # ================================
     scaler = MinMaxScaler()
     df["rating_norm"] = scaler.fit_transform(df[["rating_score"]])
 
-    # ========= SCORE FINAL =========
-    df["final_score"] = 0.6 * df["content_sim"] + 0.4 * df["rating_norm"]
+    df["final_score"] = (
+        0.5 * df["rating_norm"] +
+        0.5 * df["content_sim"]
+    )
 
-    # ========= AGRUPAR Y RETORNAR ==========
-    resultados = []
+    # ================================
+    # 4. FILTRAR POR NIVEL (REAL)
+    # ================================
+    if "Level" not in df.columns:
+        raise Exception("Tu CSV debe contener una columna 'Level' para filtrar ejercicios.")
 
-    for muscle in mlb.classes_:
-        df_muscle = df[df["muscles"].apply(lambda x: muscle in x)]
-        if df_muscle.empty:
-            continue
+    df["Level"] = df["Level"].astype(str).str.strip().str.capitalize()
 
-        top_muscle = df_muscle.sort_values("final_score", ascending=False).head(exercises_per_group).copy()
-        top_muscle["grupo_muscular"] = muscle
-        resultados.append(top_muscle)
+    niveles_validos = ["Beginner", "Intermediate", "Expert"]
 
-    if not resultados:
-        return pd.DataFrame()
+    nivel_usuario = nivel_usuario.capitalize()
+    if nivel_usuario not in niveles_validos:
+        nivel_usuario = "Beginner"
 
-    final_df = pd.concat(resultados)
+    df = df[df["Level"] == nivel_usuario]
 
-    return final_df[[
-        "grupo_muscular",
+    # ================================
+    # 5. RETORNAR MEJORES EJERCICIOS
+    # ================================
+    return df.sort_values("final_score", ascending=False).head(ejercicios_a_recomendar)[[
         "Exercise_Name",
         "muscles",
+        "Level",
         "rating_score",
         "final_score"
-    ]].sort_values(["grupo_muscular", "final_score"], ascending=[True, False])
+    ]]
+
 
 
 # ================================
@@ -222,14 +223,10 @@ if __name__ == "__main__":
         "altura": 178
     }
 
-    user_priorities = {
-        "chest": 7,
-        "back": 5,
-        "legs": 6,
-        "abs": 6,
-        "biceps": 7
-    }
-
-    recomendaciones = recomendar_por_grupo(user_data, user_priorities, exercises_per_group=3)
+    recomendaciones = recomendar_ejercicios(
+        user_data,
+        nivel_usuario="Expert",
+        ejercicios_a_recomendar=10
+    )
 
     print(recomendaciones.to_string(index=False))
