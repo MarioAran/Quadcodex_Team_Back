@@ -3,14 +3,16 @@ from flask import Flask, request, jsonify
 from train_model import GymRecommender
 
 app = Flask(__name__)
+##
+# ejemplo url api http://localhost:5000/recomendar?genero=male&edad=30&peso=120&altura=160&nivel=Intermediate&cantidad=5
+##
 
-# Instanciamos el recomendador y entrenamos/cargamos el modelo
 recommender = GymRecommender()
 recommender.entrenar_modelo(force=False)
 
 @app.route('/')
 def index():
-    return "API de Recomendación de Ejercicios Gym ✅"
+    return "API de Recomendación de Ejercicios Gym OK"
 
 # ================================
 # ENDPOINT DE RECOMENDACIÓN
@@ -18,7 +20,6 @@ def index():
 @app.route('/recomendar', methods=['GET', 'POST'])
 def recomendar():
     try:
-        # GET: parámetros en URL
         if request.method == 'GET':
             genero = request.args.get('genero', default='male')
             edad = int(request.args.get('edad', default=25))
@@ -26,8 +27,6 @@ def recomendar():
             altura = float(request.args.get('altura', default=170))
             nivel = request.args.get('nivel', default='Beginner')
             cantidad = int(request.args.get('cantidad', default=10))
-
-        # POST: parámetros en JSON
         elif request.method == 'POST':
             data = request.json
             if not data:
@@ -38,19 +37,13 @@ def recomendar():
             altura = float(data.get('altura', 170))
             nivel = data.get('nivel', 'Beginner')
             cantidad = int(data.get('cantidad', 10))
-
-        # Preparar datos del usuario
         user_data = {"genero": genero, "edad": edad, "peso": peso, "altura": altura}
-
-        # Obtener recomendaciones
         recomendaciones = recommender.recomendar_ejercicios(
             user_data=user_data,
             nivel_usuario=nivel,
             ejercicios_a_recomendar=cantidad
         )
-
         recomendaciones_json = recomendaciones.to_dict(orient='records')
-
         return jsonify({
             "status": "success",
             "cantidad_recomendaciones": len(recomendaciones_json),
@@ -63,16 +56,10 @@ def recomendar():
     except Exception as e:
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# ================================
-# ENDPOINT DE HEALTHCHECK
-# ================================
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok", "mensaje": "API funcionando"}), 200
 
-# ================================
-# ENDPOINT DE INFO DEL MODELO
-# ================================
 @app.route('/info', methods=['GET'])
 def info():
     return jsonify({
@@ -81,8 +68,5 @@ def info():
         "niveles_disponibles": recommender.df["Level"].unique().tolist() if recommender.df is not None else []
     })
 
-# ================================
-# EJECUCIÓN
-# ================================
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

@@ -21,16 +21,11 @@ class GymRecommender:
     def __init__(self, data_path='../Data/', model_file='modelo_gym.pkl'):
         self.data_path = data_path
         self.model_file = os.path.join(data_path, model_file)
-
         self.corrMatrix = None
         self.df = None
         self.ratings_df = None
         self.mlb = None
         self.feature_matrix = None
-
-    # ---------------------------
-    # UTILIDADES DE LIMPIEZA
-    # ---------------------------
     def normalize_muscle(self, x):
         x = str(x).lower()
         for k in self.MUSCLE_MAP:
@@ -48,9 +43,6 @@ class GymRecommender:
             return list(set([self.normalize_muscle(t) for t in tokens if self.normalize_muscle(t)]))
         return []
 
-    # ---------------------------
-    # ENTRENAMIENTO / CARGA
-    # ---------------------------
     def entrenar_modelo(self, force=False):
         mega_file = os.path.join(self.data_path, "megaGymDataset.csv")
         ratings_file = os.path.join(self.data_path, "usuarios_ejercicios_valoraciones.csv")
@@ -104,36 +96,22 @@ class GymRecommender:
             }, f)
         print("### Modelo entrenado y guardado ✅")
 
-    # ---------------------------
-    # RECOMENDACIÓN
-    # ---------------------------
-    # ---------------------------
-# RECOMENDACIÓN
-# ---------------------------
     def recomendar_ejercicios(self, user_data, nivel_usuario="Beginner", ejercicios_a_recomendar=15):
         if self.corrMatrix is None:
             raise Exception("Modelo no entrenado. Ejecuta entrenar_modelo() primero")
 
         df_local = self.df.copy()
 
-        # ---------------------------
-        # LIMPIEZA DE DATOS DE USUARIOS
-        # ---------------------------
         ratings_df_clean = self.ratings_df.copy()
 
-        # Llenar NaN con medias o valores por defecto
         ratings_df_clean['edad'] = ratings_df_clean['edad'].fillna(ratings_df_clean['edad'].mean())
         ratings_df_clean['peso'] = ratings_df_clean['peso'].fillna(ratings_df_clean['peso'].mean())
         ratings_df_clean['altura'] = ratings_df_clean['altura'].fillna(ratings_df_clean['altura'].mean())
         ratings_df_clean['genero'] = ratings_df_clean['genero'].fillna('male')
         ratings_df_clean['valoracion'] = ratings_df_clean['valoracion'].fillna(1)
 
-        # Convertir genero a numérico
         ratings_df_clean["genero"] = ratings_df_clean["genero"].map({"male": 1, "female": 0})
 
-        # ---------------------------
-        # SIMILITUD CON OTROS USUARIOS
-        # ---------------------------
         user_vec = np.array([
             1 if user_data.get("genero", "male") == "male" else 0,
             user_data.get("edad", 25),
@@ -145,29 +123,19 @@ class GymRecommender:
         similarities = cosine_similarity(user_vec, other_users)[0]
         ratings_df_clean["user_sim"] = similarities
 
-        # Calcular rating ponderado
         weighted = ratings_df_clean.groupby("id_ejercicio").apply(
             lambda x: np.average(x["valoracion"], weights=x["user_sim"])
         ).fillna(0)
         df_local["rating_score"] = df_local["id_ejercicio"].map(weighted).fillna(0)
 
-        # ---------------------------
-        # SIMILITUD POR CONTENIDO
-        # ---------------------------
         content_sim = cosine_similarity(self.feature_matrix, self.feature_matrix).mean(axis=1)
         df_local["content_sim"] = content_sim
 
-        # ---------------------------
-        # SCORE FINAL NORMALIZADO
-        # ---------------------------
         df_local["rating_score"] = df_local["rating_score"].fillna(0)
         scaler = MinMaxScaler()
         df_local["rating_norm"] = scaler.fit_transform(df_local[["rating_score"]])
         df_local["final_score"] = 0.5 * df_local["rating_norm"] + 0.5 * df_local["content_sim"]
 
-        # ---------------------------
-        # FILTRAR POR NIVEL
-        # ---------------------------
         df_local["Level"] = df_local["Level"].astype(str).str.strip().str.capitalize()
         niveles_validos = ["Beginner", "Intermediate", "Expert"]
         nivel_usuario = nivel_usuario.capitalize()
@@ -176,9 +144,6 @@ class GymRecommender:
 
         df_local = df_local[df_local["Level"] == nivel_usuario]
 
-        # ---------------------------
-        # RETORNAR TOP N
-        # ---------------------------
         return df_local.sort_values("final_score", ascending=False).head(ejercicios_a_recomendar)[[
             "Exercise_Name",
             "muscles",
@@ -187,10 +152,6 @@ class GymRecommender:
             "final_score"
         ]]
 
-
-# =========================
-# EJEMPLO DE USO
-# =========================
 if __name__ == "__main__":
     recommender = GymRecommender()
     recommender.entrenar_modelo(force=False)
