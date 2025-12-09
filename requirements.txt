@@ -4,12 +4,3 @@ gunicorn==21.2.0
 numpy==1.25.2
 scikit-learn==1.4.2
 pandas==2.1.1
-opencv-python==4.7.0.72
-pillow==10.1.0
-watchdog==3.0.0
-torch==2.2.0
-torchvision==0.17.1
-streamlit==1.51.0
-ultralytics==8.0.162
-nbformat==5.10.0
-
