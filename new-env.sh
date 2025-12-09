@@ -1,6 +1,6 @@
 #!/bin/bash
 # new.sh: inicializa el entorno y arranca Flask
-ENV_PATH="../app/.env"
+ENV_PATH="./app/.env"
 if [ ! -d "$ENV_PATH" ]; then
     echo "Creando entorno virtual en $ENV_PATH..."
     python3.10 -m venv "$ENV_PATH"
