@@ -1,7 +1,5 @@
 # app.py
 from flask import Flask, request, jsonify
-#from train_model import GymRecommender
-# gym_recommender.py
 import os
 import pickle
 import pandas as pd
@@ -59,7 +57,6 @@ class GymRecommender:
         ratings_file = os.path.join(self.data_path, "usuarios_ejercicios_valoraciones.csv")
 
         if not force and os.path.exists(self.model_file):
-            print("### Cargando modelo desde archivo...")
             with open(self.model_file, "rb") as f:
                 data = pickle.load(f)
                 self.corrMatrix = data["corrMatrix"]
@@ -67,9 +64,7 @@ class GymRecommender:
                 self.ratings_df = data["ratings_df"]
                 self.mlb = data["mlb"]
                 self.feature_matrix = data["feature_matrix"]
-
-            print("Ejercicios totales:", self.df.shape[0])
-            print("### Modelo cargado correctamente")
+            print("### Modelo cargado ✅")
             return
 
         print("### Entrenando modelo desde cero...")
@@ -78,30 +73,31 @@ class GymRecommender:
         self.ratings_df = pd.read_csv(ratings_file)
         self.ratings_df["valoracion"] = self.ratings_df["valoracion"].fillna(1)
 
-        # ------------------------------
-        # Incluir equipamiento
-        # ------------------------------
+        # Asignar id_usuario si no existe
+        if "id_usuario" not in self.ratings_df.columns:
+            num_usuarios = 500
+            self.ratings_df["id_usuario"] = np.random.randint(1, num_usuarios + 1, size=len(self.ratings_df))
+
+        # DataFrame de ejercicios
         self.df = pd.DataFrame({
             "Exercise_Name": gym["Title"],
             "muscles": gym["BodyPart"].apply(self.clean_muscles),
             "Equipment": gym["Equipment"] if "Equipment" in gym.columns else "None",
             "Level": gym["Level"] if "Level" in gym.columns else gym["Difficulty"]
         })
-
-        self.df = self.df[self.df["muscles"].map(len) > 0]
-        self.df.reset_index(drop=True, inplace=True)
+        self.df = self.df[self.df["muscles"].map(len) > 0].reset_index(drop=True)
         self.df["id_ejercicio"] = self.df.index
 
+        # Matriz de características de músculos
         self.mlb = MultiLabelBinarizer()
         self.feature_matrix = self.mlb.fit_transform(self.df["muscles"])
 
-        self.ratings_df["user_id"] = range(len(self.ratings_df))
+        # Matriz colaborativa de ratings por usuario
         ratings_pivot = self.ratings_df.pivot_table(
-            index="user_id",
+            index="id_usuario",
             columns="id_ejercicio",
             values="valoracion"
         ).fillna(0)
-
         self.corrMatrix = ratings_pivot.corr(method="pearson", min_periods=5)
 
         with open(self.model_file, "wb") as f:
@@ -116,12 +112,11 @@ class GymRecommender:
         print("### Modelo entrenado y guardado ✅")
 
     # ------------------------------
-    # Recomendación mejorada
+    # Recomendación híbrida
     # ------------------------------
     def recomendar_ejercicios(self, user_data, nivel_usuario="Beginner", ejercicios_a_recomendar=15):
-
         if self.corrMatrix is None:
-            raise Exception("Modelo no entrenado. Ejecuta entrenar_modelo() primero")
+            raise Exception("Modelo no entrenado")
 
         df = self.df.copy()
         ratings = self.ratings_df.copy()
@@ -132,66 +127,57 @@ class GymRecommender:
         ratings['altura'] = ratings['altura'].fillna(ratings['altura'].mean())
         ratings['genero'] = ratings['genero'].fillna('male')
         ratings['valoracion'] = ratings['valoracion'].fillna(1)
-
         ratings["genero"] = ratings["genero"].map({"male": 1, "female": 0})
 
-        # Vector del usuario actual
+        # Vector usuario actual
         user_vec = np.array([
-            1 if user_data.get("genero", "male") == "male" else 0,
-            user_data.get("edad", 25),
-            user_data.get("peso", 70),
-            user_data.get("altura", 170)
-        ]).reshape(1, -1)
+            1 if user_data.get("genero","male")=="male" else 0,
+            user_data.get("edad",25),
+            user_data.get("peso",70),
+            user_data.get("altura",170)
+        ]).reshape(1,-1)
 
-        other_users = ratings[["genero", "edad", "peso", "altura"]].values
+        # Similitud con usuarios existentes (atributos físicos)
+        other_users = ratings[["genero","edad","peso","altura"]].values
         similarities = cosine_similarity(user_vec, other_users)[0]
         ratings["user_sim"] = similarities
 
-        # Rating ponderado
+        # Rating ponderado por id_ejercicio
         weighted = ratings.groupby("id_ejercicio").apply(
             lambda x: np.average(x["valoracion"], weights=x["user_sim"])
         ).fillna(0)
-
         df["rating_score"] = df["id_ejercicio"].map(weighted).fillna(0)
 
         # Similitud de contenido
         content_sim = cosine_similarity(self.feature_matrix, self.feature_matrix).mean(axis=1)
         df["content_sim"] = content_sim
 
+        # Combinación final
         scaler = MinMaxScaler()
         df["rating_norm"] = scaler.fit_transform(df[["rating_score"]])
         df["final_score"] = 0.5 * df["rating_norm"] + 0.5 * df["content_sim"]
 
-        # ------------------------------
-        # SISTEMA DE NIVELES FLEXIBLE
-        # ------------------------------
-        niveles = ["Beginner", "Intermediate", "Expert"]
+        # Filtrado por nivel
+        niveles = ["Beginner","Intermediate","Expert"]
         nivel_usuario = nivel_usuario.capitalize()
-
         if nivel_usuario not in niveles:
             nivel_usuario = "Beginner"
 
         df["Level"] = df["Level"].astype(str).str.capitalize()
-
         idx = niveles.index(nivel_usuario)
-        niveles_permitidos = niveles[:idx + 1][::-1]
+        niveles_permitidos = niveles[:idx+1][::-1]
 
         capas = []
         for lvl in niveles_permitidos:
-            sub = df[df["Level"] == lvl].sort_values("final_score", ascending=False)
+            sub = df[df["Level"]==lvl].sort_values("final_score", ascending=False)
             if not sub.empty:
                 capas.append(sub)
-
         df_priorizado = pd.concat(capas, ignore_index=True)
 
-        # ------------------------------
-        # REPARTO POR GRUPOS MUSCULARES
-        # ------------------------------
-        grupos = ["chest", "back", "legs", "shoulders", "biceps", "triceps", "glutes", "abs"]
-
+        # Reparto por grupos musculares
+        grupos = ["chest","back","legs","shoulders","biceps","triceps","glutes","abs"]
         seleccion = []
         usados = set()
-
         for g in grupos:
             cand = df_priorizado[df_priorizado["muscles"].apply(lambda x: g in x)]
             if not cand.empty:
@@ -199,35 +185,24 @@ class GymRecommender:
                 if row["id_ejercicio"] not in usados:
                     seleccion.append(row)
                     usados.add(row["id_ejercicio"])
-            if len(seleccion) >= ejercicios_a_recomendar:
+            if len(seleccion)>=ejercicios_a_recomendar:
                 break
 
-        if len(seleccion) < ejercicios_a_recomendar:
-            faltan = ejercicios_a_recomendar - len(seleccion)
+        if len(seleccion)<ejercicios_a_recomendar:
+            faltan = ejercicios_a_recomendar-len(seleccion)
             extra = df_priorizado[~df_priorizado["id_ejercicio"].isin(usados)].head(faltan)
             seleccion.extend(extra.to_dict(orient="records"))
         else:
             seleccion = seleccion[:ejercicios_a_recomendar]
 
-        seleccion_df = pd.DataFrame([r if isinstance(r, dict) else r.to_dict() for r in seleccion])
+        seleccion_df = pd.DataFrame([r if isinstance(r,dict) else r.to_dict() for r in seleccion])
 
-        # ------------------------------
-        # DEVOLVER EQUIPAMIENTO
-        # ------------------------------
-        return seleccion_df[[
-            "Exercise_Name",
-            "muscles",
-            "Equipment",
-            "Level",
-            "rating_score",
-            "final_score"
-        ]]
-    
+        return seleccion_df[["Exercise_Name","muscles","Equipment","Level","rating_score","final_score"]]
 
+# ------------------------------
+# FLASK APP
+# ------------------------------
 app = Flask(__name__)
-##
-# ejemplo url api http://localhost:5000/recomendar?genero=male&edad=30&peso=120&altura=160&nivel=Intermediate&cantidad=5
-##
 
 recommender = GymRecommender()
 recommender.entrenar_modelo(force=False)
@@ -236,81 +211,63 @@ recommender.entrenar_modelo(force=False)
 def index():
     return "API de Recomendación de Ejercicios Gym OK"
 
-# ================================
-# ENDPOINT DE RECOMENDACIÓN
-# ================================
-@app.route('/recomendar', methods=['GET', 'POST'])
+@app.route('/recomendar', methods=['GET','POST'])
 def recomendar():
     try:
-        if request.method == 'GET':
-            genero = request.args.get('genero', default='male')
-            edad = int(request.args.get('edad', default=25))
-            peso = float(request.args.get('peso', default=70))
-            altura = float(request.args.get('altura', default=170))
-            nivel = request.args.get('nivel', default='Beginner')
-            cantidad = int(request.args.get('cantidad', default=10))
-        elif request.method == 'POST':
+        if recommender.ratings_df.empty:
+            return jsonify({"status":"error","mensaje":"No hay datos de ratings"}), 500
+
+        # Leer datos del usuario
+        if request.method=="GET":
+            genero = request.args.get('genero','male')
+            edad = int(request.args.get('edad',25))
+            peso = float(request.args.get('peso',70))
+            altura = float(request.args.get('altura',170))
+            nivel = request.args.get('nivel','Beginner')
+            cantidad = int(request.args.get('cantidad',10))
+        else:
             data = request.json
             if not data:
-                return jsonify({"status":"error","mensaje":"No se enviaron datos"}), 400
-            genero = data.get('genero', 'male')
-            edad = int(data.get('edad', 25))
-            peso = float(data.get('peso', 70))
-            altura = float(data.get('altura', 170))
-            nivel = data.get('nivel', 'Beginner')
-            cantidad = int(data.get('cantidad', 10))
-        user_data = {"genero": genero, "edad": edad, "peso": peso, "altura": altura}
+                return jsonify({"status":"error","mensaje":"No se enviaron datos"}),400
+            genero = data.get('genero','male')
+            edad = int(data.get('edad',25))
+            peso = float(data.get('peso',70))
+            altura = float(data.get('altura',170))
+            nivel = data.get('nivel','Beginner')
+            cantidad = int(data.get('cantidad',10))
+
+        user_data = {"genero":genero,"edad":edad,"peso":peso,"altura":altura}
+
+        # Recomendaciones
         recomendaciones = recommender.recomendar_ejercicios(
             user_data=user_data,
             nivel_usuario=nivel,
             ejercicios_a_recomendar=cantidad
         )
-        recomendaciones_json = recomendaciones.to_dict(orient='records')
+
         return jsonify({
-            "status": "success",
-            "cantidad_recomendaciones": len(recomendaciones_json),
-            "recomendaciones": recomendaciones_json,
-            "user_data": user_data,
-            "nivel": nivel,
-            "total_ejercicios": recommender.df.shape[0]
+            "status":"success",
+            "cantidad_recomendaciones":len(recomendaciones),
+            "recomendaciones":recomendaciones.to_dict(orient='records'),
+            "user_data":user_data,
+            "nivel":nivel,
+            "total_ejercicios":recommender.df.shape[0]
         })
 
     except Exception as e:
-        return jsonify({"status": "error", "mensaje": str(e)}), 500
+        return jsonify({"status":"error","mensaje":str(e)}),500
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status": "ok", "mensaje": "API funcionando"}), 200
+    return jsonify({"status":"ok","mensaje":"API funcionando"}),200
 
 @app.route('/info', methods=['GET'])
 def info():
     return jsonify({
         "total_ejercicios": recommender.df.shape[0] if recommender.df is not None else 0,
-        "total_usuarios": recommender.ratings_df.shape[0] if recommender.ratings_df is not None else 0,
+        "total_usuarios": recommender.ratings_df["id_usuario"].nunique() if recommender.ratings_df is not None else 0,
         "niveles_disponibles": recommender.df["Level"].unique().tolist() if recommender.df is not None else []
     })
 
-if __name__ == '__main__':
+if __name__=='__main__':
     app.run(debug=True, port=5000)
-        # Inicializar y entrenar modelo
-    recommender = GymRecommender()
-    recommender.entrenar_modelo(force=False)
-
-    # Datos de usuario de prueba
-    user_data = {
-        "genero": "male",
-        "edad": 28,
-        "peso": 100,
-        "altura": 178
-        }
-
-    # Solicitar recomendaciones
-    recomendaciones = recommender.recomendar_ejercicios(
-        user_data=user_data,
-        nivel_usuario="Expert",
-        ejercicios_a_recomendar=10
-        )
-
-    # Mostrar resultados en consola
-    print("=== Recomendaciones de Ejercicios ===")
-    print(recomendaciones.to_string(index=False))
