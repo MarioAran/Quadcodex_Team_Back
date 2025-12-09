@@ -1,5 +1,4 @@
-torch==2.1.0
-torchvision==0.16.0
+
 
 streamlit==1.51.0
 ultralytics==8.0.162
@@ -13,4 +12,7 @@ scikit-learn==1.4.2
 
 Flask==3.1.2
 Flask-Cors==4.0.0
+
+torch
+torchvision
 
