@@ -1,19 +1,24 @@
-
-
-streamlit==1.51.0
-ultralytics==8.0.162
+# Core
+Flask==3.1.2
+Flask-Cors==4.0.0
 gunicorn==21.2.0
 
+# Data & ML
 numpy==1.25.2
+scikit-learn==1.4.2
+pandas==2.1.1
+
+# Images / Computer Vision
 opencv-python==4.7.0.72
 pillow==10.1.0
 watchdog==3.0.0
+
+# Deep Learning
+torch==2.2.0
+torchvision==0.17.1
+
+# Other
+streamlit==1.51.0
+ultralytics==8.0.162
 nbformat==5.10.0
-scikit-learn==1.4.2
-
-Flask==3.1.2
-Flask-Cors==4.0.0
-
-torch
-torchvision
 
