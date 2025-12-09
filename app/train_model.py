@@ -19,7 +19,7 @@ class GymRecommender:
         "glutes": "glutes"
     }
 
-    def __init__(self, data_path='../Data/', model_file='modelo_gym.pkl'):
+    def __init__(self, data_path='Data/', model_file='modelo_gym.pkl'):
         self.data_path = data_path
         self.model_file = os.path.join(data_path, model_file)
         self.corrMatrix = None

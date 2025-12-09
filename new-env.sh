@@ -17,7 +17,7 @@ echo "Instalando dependencias..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
-export FLASK_APP=../app/api_gym.py
+export FLASK_APP=./app/api_gym.py
 export FLASK_ENV=development
 
 echo "Iniciando Flask..."
