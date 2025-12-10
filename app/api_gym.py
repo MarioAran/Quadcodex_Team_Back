@@ -23,9 +23,11 @@ class GymRecommender:
     def __init__(self, data_path='Data/', model_file='modelo_gym.pkl'):
         self.data_path = data_path
         self.model_file = os.path.join(data_path, model_file)
+        self.user_file = os.path.join(data_path,"usuarios.csv")
         self.corrMatrix = None
         self.df = None
         self.ratings_df = None
+        self.user_df = None
         self.mlb = None
         self.feature_matrix = None
 
@@ -64,9 +66,8 @@ class GymRecommender:
                 self.ratings_df = data["ratings_df"]
                 self.mlb = data["mlb"]
                 self.feature_matrix = data["feature_matrix"]
-            print("### Modelo cargado ✅")
+            print("### Modelo cargado")
             return
-
         print("### Entrenando modelo desde cero...")
 
         gym = pd.read_csv(mega_file)
@@ -256,6 +257,39 @@ def recomendar():
 
     except Exception as e:
         return jsonify({"status":"error","mensaje":str(e)}),500
+
+# ------------------------------
+# NUEVO ENDPOINT: LOGIN POR DNI
+# ------------------------------
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    # Leer dni
+    dni = None
+    if request.method == "POST":
+        data = request.json
+        if data:
+            dni = data.get("dni")
+    else:  # GET
+        dni = request.args.get("dni")
+
+    if not dni:
+        return jsonify({"status":"error", "mensaje":"Debe enviar el DNI"}), 400
+
+    # Leer CSV de usuarios
+    try:
+        usuarios = pd.read_csv(recommender.user_file)
+    except Exception as e:
+        return jsonify({"status":"error","mensaje":f"No se pudo leer usuarios.csv: {str(e)}"}), 500
+
+    # Buscar usuario
+    usuario = usuarios[usuarios['dni'] == dni]
+    if usuario.empty:
+        return jsonify({"status":"error","mensaje":"Usuario no encontrado"}), 404
+
+    usuario_info = usuario[['id_user','nombre','apellido','dni']].iloc[0].to_dict()
+    return jsonify({"status":"success","usuario": usuario_info})
+
+
 
 @app.route('/health', methods=['GET'])
 def health():
