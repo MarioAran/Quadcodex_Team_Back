@@ -218,26 +218,34 @@ def recomendar():
         if recommender.ratings_df.empty:
             return jsonify({"status":"error","mensaje":"No hay datos de ratings"}), 500
 
-        # Leer datos del usuario
-        if request.method=="GET":
-            genero = request.args.get('genero','male')
-            edad = int(request.args.get('edad',25))
-            peso = float(request.args.get('peso',70))
-            altura = float(request.args.get('altura',170))
-            nivel = request.args.get('nivel','Beginner')
-            cantidad = int(request.args.get('cantidad',10))
-        else:
+        # Leer id_user enviado desde cliente (login previo)
+        id_user = None
+        if request.method == "POST":
             data = request.json
-            if not data:
-                return jsonify({"status":"error","mensaje":"No se enviaron datos"}),400
-            genero = data.get('genero','male')
-            edad = int(data.get('edad',25))
-            peso = float(data.get('peso',70))
-            altura = float(data.get('altura',170))
-            nivel = data.get('nivel','Beginner')
-            cantidad = int(data.get('cantidad',10))
+            if not data or "id_user" not in data:
+                return jsonify({"status":"error","mensaje":"Debe enviar id_user"}), 400
+            id_user = int(data.get("id_user"))
+            nivel = data.get("nivel", "Beginner")
+            cantidad = int(data.get("cantidad", 10))
+        else:  # GET
+            id_user = request.args.get("id_user")
+            if not id_user:
+                return jsonify({"status":"error","mensaje":"Debe enviar id_user"}), 400
+            id_user = int(id_user)
+            nivel = request.args.get("nivel", "Beginner")
+            cantidad = int(request.args.get("cantidad", 10))
 
-        user_data = {"genero":genero,"edad":edad,"peso":peso,"altura":altura}
+        # Buscar datos del usuario en ratings_df
+        if id_user not in recommender.ratings_df['id_usuario'].values:
+            return jsonify({"status":"error","mensaje":"Usuario no tiene datos de ratings"}), 404
+
+        user_ratings = recommender.ratings_df[recommender.ratings_df['id_usuario'] == id_user]
+        user_data = {
+            "genero": user_ratings['genero'].iloc[0] if 'genero' in user_ratings.columns else 'male',
+            "edad": user_ratings['edad'].iloc[0] if 'edad' in user_ratings.columns else 25,
+            "peso": user_ratings['peso'].iloc[0] if 'peso' in user_ratings.columns else 70,
+            "altura": user_ratings['altura'].iloc[0] if 'altura' in user_ratings.columns else 170
+        }
 
         # Recomendaciones
         recomendaciones = recommender.recomendar_ejercicios(
@@ -248,11 +256,12 @@ def recomendar():
 
         return jsonify({
             "status":"success",
-            "cantidad_recomendaciones":len(recomendaciones),
-            "recomendaciones":recomendaciones.to_dict(orient='records'),
-            "user_data":user_data,
-            "nivel":nivel,
-            "total_ejercicios":recommender.df.shape[0]
+            "id_user": id_user,
+            "cantidad_recomendaciones": len(recomendaciones),
+            "recomendaciones": recomendaciones.to_dict(orient='records'),
+            "user_data": user_data,
+            "nivel": nivel,
+            "total_ejercicios": recommender.df.shape[0]
         })
 
     except Exception as e:
