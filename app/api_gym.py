@@ -152,28 +152,22 @@ class GymRecommender:
     # ------------------------------
     def recomendar_ejercicios(self, user_data, nivel_usuario="Beginner", ejercicios_a_recomendar=15):
 
-        # ============================
-        # 1) Si viene id_usuario → modo personalizado
-        # ============================
-        user_id = user_data.get("id_usuario", None)
-
-        if user_id is not None:
-            recomendado = self.recomendar_por_id(user_id, ejercicios_a_recomendar)
-            if recomendado is not None:
-                return recomendado
-                
-
-        # ============================
-        # 2) Si NO hay id_usuario → modo general por cuerpo + ratings globales
-        # ============================
-
         if self.corrMatrix is None:
-            raise Exception("Modelo no entrenado")
+            raise Exception("Modelo no entrenado. Ejecuta entrenar_modelo() primero")
 
         df = self.df.copy()
         ratings = self.ratings_df.copy()
 
-        # Fill NaNs
+        # ------------------------------
+        # ¿VIENE CON USER ID?
+        # ------------------------------
+        user_id = user_data.get("user_id", None)
+
+        tiene_id = user_id is not None and user_id in ratings["user_id"].unique()
+
+        # ------------------------------
+        # LIMPIEZA RÁPIDA
+        # ------------------------------
         ratings['edad'] = ratings['edad'].fillna(ratings['edad'].mean())
         ratings['peso'] = ratings['peso'].fillna(ratings['peso'].mean())
         ratings['altura'] = ratings['altura'].fillna(ratings['altura'].mean())
@@ -181,53 +175,97 @@ class GymRecommender:
         ratings['valoracion'] = ratings['valoracion'].fillna(1)
         ratings["genero"] = ratings["genero"].map({"male": 1, "female": 0})
 
-        # Vector usuario actual
-        user_vec = np.array([
-            1 if user_data.get("genero","male")=="male" else 0,
-            user_data.get("edad",25),
-            user_data.get("peso",70),
-            user_data.get("altura",170)
-        ]).reshape(1,-1)
+        # ============================================================
+        #  CASO 1 — RECOMENDACIÓN POR USER ID (COLLABORATIVE)
+        # ============================================================
+        if tiene_id:
 
-        # Similitud física
-        other_users = ratings[["genero","edad","peso","altura"]].values
-        similarities = cosine_similarity(user_vec, other_users)[0]
-        ratings["user_sim"] = similarities
+            print("### Modo colaborativo — usando user_id:", user_id)
 
-        # Rating ponderado
-        weighted = ratings.groupby("id_ejercicio").apply(
-            lambda x: np.average(x["valoracion"], weights=x["user_sim"])
-        ).fillna(0)
-        df["rating_score"] = df["id_ejercicio"].map(weighted).fillna(0)
+            # Ratings del usuario
+            user_ratings = ratings[ratings["user_id"] == user_id]
 
-        # Similitud de contenido
-        content_sim = cosine_similarity(self.feature_matrix, self.feature_matrix).mean(axis=1)
-        df["content_sim"] = content_sim
+            # Ejercicios que ya valoró
+            rated_items = user_ratings[user_ratings["valoracion"] > 0]["id_ejercicio"]
 
-        # Combinación final
-        scaler = MinMaxScaler()
-        df["rating_norm"] = scaler.fit_transform(df[["rating_score"]])
-        df["final_score"] = 0.5 * df["rating_norm"] + 0.5 * df["content_sim"]
+            # Sumar similitudes basado en correlación
+            score_total = {}
+            for item in rated_items:
+                if item not in self.corrMatrix:
+                    continue
+                similares = self.corrMatrix[item].dropna()
+                for sim_item, sim_value in similares.items():
+                    score_total[sim_item] = score_total.get(sim_item, 0) + sim_value
 
-        # Filtrado por nivel
-        niveles = ["Beginner","Intermediate","Expert"]
+            # Convertir a DataFrame
+            score_df = pd.DataFrame(score_total.items(), columns=["id_ejercicio", "score"])
+            score_df.sort_values("score", ascending=False, inplace=True)
+
+            df = df.merge(score_df, on="id_ejercicio", how="left")
+            df["score"] = df["score"].fillna(0)
+            df["final_score"] = df["score"]
+
+        # ============================================================
+        #  CASO 2 — SIN USER ID → RECOMENDACIÓN POR FÍSICO + CONTENIDO
+        # ============================================================
+        else:
+
+            print("### Modo general — sin user_id, usando físicas + contenido")
+
+            # Vector físico del usuario
+            user_vec = np.array([
+                1 if user_data.get("genero", "male") == "male" else 0,
+                user_data.get("edad", 25),
+                user_data.get("peso", 70),
+                user_data.get("altura", 170)
+            ]).reshape(1, -1)
+
+            other_users = ratings[["genero", "edad", "peso", "altura"]].values
+            similarities = cosine_similarity(user_vec, other_users)[0]
+            ratings["user_sim"] = similarities
+
+            # Rating ponderado por similitud física
+            weighted = ratings.groupby("id_ejercicio").apply(
+                lambda x: np.average(x["valoracion"], weights=x["user_sim"])
+            ).fillna(0)
+
+            df["rating_score"] = df["id_ejercicio"].map(weighted).fillna(0)
+
+            # Similitud de contenido
+            content_sim = cosine_similarity(self.feature_matrix, self.feature_matrix).mean(axis=1)
+            df["content_sim"] = content_sim
+
+            scaler = MinMaxScaler()
+            df["rating_norm"] = scaler.fit_transform(df[["rating_score"]])
+            df["final_score"] = 0.5 * df["rating_norm"] + 0.5 * df["content_sim"]
+
+        # ============================================================
+        #  FILTRADO POR NIVEL
+        # ============================================================
+        niveles = ["Beginner", "Intermediate", "Expert"]
         nivel_usuario = nivel_usuario.capitalize()
+
         if nivel_usuario not in niveles:
             nivel_usuario = "Beginner"
 
         df["Level"] = df["Level"].astype(str).str.capitalize()
+
         idx = niveles.index(nivel_usuario)
-        niveles_permitidos = niveles[:idx+1][::-1]
+        niveles_permitidos = niveles[:idx + 1][::-1]
 
         capas = []
         for lvl in niveles_permitidos:
-            sub = df[df["Level"]==lvl].sort_values("final_score", ascending=False)
+            sub = df[df["Level"] == lvl].sort_values("final_score", ascending=False)
             if not sub.empty:
                 capas.append(sub)
+
         df_priorizado = pd.concat(capas, ignore_index=True)
 
-        # Distribución muscular
-        grupos = ["chest","back","legs","shoulders","biceps","triceps","glutes","abs"]
+        # ============================================================
+        #  REPARTO POR GRUPOS MUSCULARES
+        # ============================================================
+        grupos = ["chest", "back", "legs", "shoulders", "biceps", "triceps", "glutes", "abs"]
+
         seleccion = []
         usados = set()
 
@@ -238,19 +276,25 @@ class GymRecommender:
                 if row["id_ejercicio"] not in usados:
                     seleccion.append(row)
                     usados.add(row["id_ejercicio"])
-            if len(seleccion)>=ejercicios_a_recomendar:
+            if len(seleccion) >= ejercicios_a_recomendar:
                 break
 
-        # Rellenar si faltan
-        if len(seleccion)<ejercicios_a_recomendar:
-            faltan = ejercicios_a_recomendar-len(seleccion)
+        if len(seleccion) < ejercicios_a_recomendar:
+            faltan = ejercicios_a_recomendar - len(seleccion)
             extra = df_priorizado[~df_priorizado["id_ejercicio"].isin(usados)].head(faltan)
             seleccion.extend(extra.to_dict(orient="records"))
         else:
             seleccion = seleccion[:ejercicios_a_recomendar]
 
-        seleccion_df = pd.DataFrame([r if isinstance(r,dict) else r.to_dict() for r in seleccion])
-        return seleccion_df[["Exercise_Name","muscles","Equipment","Level","rating_score","final_score"]]
+        seleccion_df = pd.DataFrame([r if isinstance(r, dict) else r.to_dict() for r in seleccion])
+
+        return seleccion_df[[
+            "Exercise_Name",
+            "muscles",
+            "Equipment",
+            "Level",
+            "final_score"
+        ]]
 
 # ------------------------------
 # FLASK APP
