@@ -68,6 +68,7 @@ class GymRecommender:
                 self.feature_matrix = data["feature_matrix"]
             print("### Modelo cargado")
             return
+
         print("### Entrenando modelo desde cero...")
 
         gym = pd.read_csv(mega_file)
@@ -79,7 +80,7 @@ class GymRecommender:
             num_usuarios = 500
             self.ratings_df["id_usuario"] = np.random.randint(1, num_usuarios + 1, size=len(self.ratings_df))
 
-        # DataFrame de ejercicios
+        # DataFrame ejercicios
         self.df = pd.DataFrame({
             "Exercise_Name": gym["Title"],
             "muscles": gym["BodyPart"].apply(self.clean_muscles),
@@ -89,11 +90,11 @@ class GymRecommender:
         self.df = self.df[self.df["muscles"].map(len) > 0].reset_index(drop=True)
         self.df["id_ejercicio"] = self.df.index
 
-        # Matriz de características de músculos
+        # Matriz características
         self.mlb = MultiLabelBinarizer()
         self.feature_matrix = self.mlb.fit_transform(self.df["muscles"])
 
-        # Matriz colaborativa de ratings por usuario
+        # Matriz colaborativa
         ratings_pivot = self.ratings_df.pivot_table(
             index="id_usuario",
             columns="id_ejercicio",
@@ -112,17 +113,67 @@ class GymRecommender:
 
         print("### Modelo entrenado y guardado ✅")
 
+
     # ------------------------------
-    # Recomendación híbrida
+    # NUEVO: Recomendación por ID
+    # ------------------------------
+    def recomendar_por_id(self, user_id, ejercicios_a_recomendar=15):
+        """Recomendación personalizada basada en gustos reales del usuario."""
+        user_ratings = self.ratings_df[self.ratings_df["id_usuario"] == user_id]
+
+        if user_ratings.empty:
+            print("Usuario sin datos → usando recomendación general.")
+            return None
+
+        # Ejercicios valorados por el usuario
+        rated_ids = user_ratings[user_ratings["valoracion"] >= 3]["id_ejercicio"].tolist()
+        if not rated_ids:
+            print("Usuario sin valoraciones útiles → recomendación general.")
+            return None
+
+        # Similaridad entre ejercicios
+        scores = pd.Series(dtype=float)
+        for ej in rated_ids:
+            if ej in self.corrMatrix.columns:
+                corr = self.corrMatrix[ej].dropna()
+                scores = scores.add(corr, fill_value=0)
+
+        scores = scores.sort_values(ascending=False)
+
+        # Evitar recomendar ejercicios ya vistos
+        scores = scores[~scores.index.isin(rated_ids)]
+
+        top_ids = scores.head(ejercicios_a_recomendar).index
+        return self.df[self.df["id_ejercicio"].isin(top_ids)]
+
+
+    # ------------------------------
+    # Recomendación híbrida (AJUSTADA)
     # ------------------------------
     def recomendar_ejercicios(self, user_data, nivel_usuario="Beginner", ejercicios_a_recomendar=15):
+
+        # ============================
+        # 1) Si viene id_usuario → modo personalizado
+        # ============================
+        user_id = user_data.get("id_usuario", None)
+
+        if user_id is not None:
+            recomendado = self.recomendar_por_id(user_id, ejercicios_a_recomendar)
+            if recomendado is not None:
+                return recomendado
+                
+
+        # ============================
+        # 2) Si NO hay id_usuario → modo general por cuerpo + ratings globales
+        # ============================
+
         if self.corrMatrix is None:
             raise Exception("Modelo no entrenado")
 
         df = self.df.copy()
         ratings = self.ratings_df.copy()
 
-        # Rellenar valores faltantes
+        # Fill NaNs
         ratings['edad'] = ratings['edad'].fillna(ratings['edad'].mean())
         ratings['peso'] = ratings['peso'].fillna(ratings['peso'].mean())
         ratings['altura'] = ratings['altura'].fillna(ratings['altura'].mean())
@@ -138,12 +189,12 @@ class GymRecommender:
             user_data.get("altura",170)
         ]).reshape(1,-1)
 
-        # Similitud con usuarios existentes (atributos físicos)
+        # Similitud física
         other_users = ratings[["genero","edad","peso","altura"]].values
         similarities = cosine_similarity(user_vec, other_users)[0]
         ratings["user_sim"] = similarities
 
-        # Rating ponderado por id_ejercicio
+        # Rating ponderado
         weighted = ratings.groupby("id_ejercicio").apply(
             lambda x: np.average(x["valoracion"], weights=x["user_sim"])
         ).fillna(0)
@@ -175,10 +226,11 @@ class GymRecommender:
                 capas.append(sub)
         df_priorizado = pd.concat(capas, ignore_index=True)
 
-        # Reparto por grupos musculares
+        # Distribución muscular
         grupos = ["chest","back","legs","shoulders","biceps","triceps","glutes","abs"]
         seleccion = []
         usados = set()
+
         for g in grupos:
             cand = df_priorizado[df_priorizado["muscles"].apply(lambda x: g in x)]
             if not cand.empty:
@@ -189,6 +241,7 @@ class GymRecommender:
             if len(seleccion)>=ejercicios_a_recomendar:
                 break
 
+        # Rellenar si faltan
         if len(seleccion)<ejercicios_a_recomendar:
             faltan = ejercicios_a_recomendar-len(seleccion)
             extra = df_priorizado[~df_priorizado["id_ejercicio"].isin(usados)].head(faltan)
@@ -197,7 +250,6 @@ class GymRecommender:
             seleccion = seleccion[:ejercicios_a_recomendar]
 
         seleccion_df = pd.DataFrame([r if isinstance(r,dict) else r.to_dict() for r in seleccion])
-
         return seleccion_df[["Exercise_Name","muscles","Equipment","Level","rating_score","final_score"]]
 
 # ------------------------------
