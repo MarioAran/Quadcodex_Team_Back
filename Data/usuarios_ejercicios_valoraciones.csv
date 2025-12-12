@@ -3003,4 +3003,6 @@ id_usuario,genero,edad,peso,altura,id_ejercicio,valoracion
 42,male,38,87.9,186.8,24,10
 42,female,25,75,175,11,8
 42,female,25,75,175,9,8
-42,female,25,75,175,124,8
+42,female,25,75,175,1162,1
+42,male,25,75,175,1045,0
+42,male,25,75,175,1235,10

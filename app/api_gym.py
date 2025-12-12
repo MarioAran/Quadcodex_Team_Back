@@ -68,8 +68,7 @@ class GymRecommender:
             with open(ratings_file, "r", newline="", encoding="utf-8") as f:
                 reader = csv.reader(f)
                 for row in reader:
-                    if len(row) >= 6 and row[0] == str(id_usuario) and row[5] == str(id_ejercicio):
-                        # Actualizar registro existente
+                    if len(row) >= 6 and str(row[0]) == str(id_usuario) and str(row[5]) == str(id_ejercicio):
                         row[1] = genero
                         row[2] = edad
                         row[3] = peso
@@ -119,7 +118,7 @@ class GymRecommender:
             "Level": gym["Level"] if "Level" in gym.columns else gym["Difficulty"]
         })
         self.df = self.df[self.df["muscles"].map(len) > 0].reset_index(drop=True)
-        self.df["id_ejercicio"] = self.df.index
+        self.df["id_ejercicio"] = self.df.index.astype(int)
 
         # Matriz de características de músculos
         self.mlb = MultiLabelBinarizer()
@@ -142,7 +141,6 @@ class GymRecommender:
                 "mlb": self.mlb,
                 "feature_matrix": self.feature_matrix
             }, f)
-
         print("### Modelo entrenado y guardado ✅")
 
     # ------------------------------
@@ -154,6 +152,11 @@ class GymRecommender:
 
         df = self.df.copy()
         ratings = self.ratings_df.copy()
+
+        # Tipos consistentes
+        ratings['id_usuario'] = ratings['id_usuario'].astype(int)
+        ratings['id_ejercicio'] = ratings['id_ejercicio'].astype(int)
+        df['id_ejercicio'] = df['id_ejercicio'].astype(int)
 
         # Rellenar valores faltantes
         ratings['edad'] = ratings['edad'].fillna(ratings['edad'].mean())
@@ -171,10 +174,14 @@ class GymRecommender:
             user_data.get("altura",170)
         ]).reshape(1,-1)
 
-        # Similitud con usuarios existentes (atributos físicos)
+        # Similitud con otros usuarios
         other_users = ratings[["genero","edad","peso","altura"]].values
         similarities = cosine_similarity(user_vec, other_users)[0]
         ratings["user_sim"] = similarities
+
+        # Peso 1.0 para las valoraciones del propio usuario
+        user_id = int(user_data.get("id_usuario", 0))
+        ratings.loc[ratings["id_usuario"] == user_id, "user_sim"] = 1.0
 
         # Rating ponderado por id_ejercicio
         weighted = ratings.groupby("id_ejercicio").apply(
@@ -196,7 +203,6 @@ class GymRecommender:
         nivel_usuario = nivel_usuario.capitalize()
         if nivel_usuario not in niveles:
             nivel_usuario = "Beginner"
-
         df["Level"] = df["Level"].astype(str).str.capitalize()
         idx = niveles.index(nivel_usuario)
         niveles_permitidos = niveles[:idx+1][::-1]
@@ -219,11 +225,11 @@ class GymRecommender:
                 if row["id_ejercicio"] not in usados:
                     seleccion.append(row)
                     usados.add(row["id_ejercicio"])
-            if len(seleccion)>=ejercicios_a_recomendar:
+            if len(seleccion) >= ejercicios_a_recomendar:
                 break
 
-        if len(seleccion)<ejercicios_a_recomendar:
-            faltan = ejercicios_a_recomendar-len(seleccion)
+        if len(seleccion) < ejercicios_a_recomendar:
+            faltan = ejercicios_a_recomendar - len(seleccion)
             extra = df_priorizado[~df_priorizado["id_ejercicio"].isin(usados)].head(faltan)
             seleccion.extend(extra.to_dict(orient="records"))
         else:
@@ -231,8 +237,12 @@ class GymRecommender:
 
         seleccion_df = pd.DataFrame([r if isinstance(r,dict) else r.to_dict() for r in seleccion])
 
-        return seleccion_df[["Exercise_Name","muscles","Equipment","Level","rating_score","final_score"]]
+        # Convertir columnas numéricas a tipos nativos
+        for col in ["rating_score","final_score"]:
+            if col in seleccion_df.columns:
+                seleccion_df[col] = seleccion_df[col].astype(float)
 
+        return seleccion_df[["Exercise_Name","muscles","Equipment","Level","rating_score","final_score"]]
 
 # ------------------------------
 # FLASK APP
@@ -254,142 +264,149 @@ def recomendar():
         if recommender.ratings_df.empty:
             return jsonify({"status":"error","mensaje":"No hay datos de ratings"}), 500
 
-        # Leer id_user y parámetros
-        data = request.json if request.method == "POST" else request.args
+        # Obtener datos del request
+        data = request.json if request.method=="POST" else request.args
         id_user = data.get("id_user")
-        nivel = data.get("nivel", "Beginner")
-        cantidad = int(data.get("cantidad", 10))
+        nivel = data.get("nivel","Beginner")
+        cantidad = int(data.get("cantidad",10))
 
         if not id_user:
             return jsonify({"status":"error","mensaje":"Debe enviar id_user"}), 400
         id_user = int(id_user)
 
-        # Datos del usuario
         if id_user not in recommender.ratings_df['id_usuario'].values:
             return jsonify({"status":"error","mensaje":"Usuario no tiene datos de ratings"}), 404
-        user_ratings = recommender.ratings_df[recommender.ratings_df['id_usuario'] == id_user]
+
+        user_ratings = recommender.ratings_df[recommender.ratings_df['id_usuario']==id_user]
         user_data = {
+            "id_usuario": id_user,
             "genero": user_ratings['genero'].iloc[0],
             "edad": user_ratings['edad'].iloc[0],
             "peso": user_ratings['peso'].iloc[0],
             "altura": user_ratings['altura'].iloc[0]
         }
 
-        recomendaciones = recommender.recomendar_ejercicios(
+        # ======================
+        # Función para convertir tipos numpy a nativos
+        # ======================
+        def to_python_type(val):
+            if isinstance(val, (np.integer, np.int64)):
+                return int(val)
+            if isinstance(val, (np.floating, np.float64)):
+                return float(val)
+            if isinstance(val, np.ndarray):
+                return val.tolist()
+            return val
+
+        # Obtener recomendaciones
+        recs = recommender.recomendar_ejercicios(
             user_data=user_data,
             nivel_usuario=nivel,
             ejercicios_a_recomendar=cantidad
         )
 
+        # Convertir columnas numéricas a tipos nativos
+        recs = recs.copy()
+        for col in ["rating_score","final_score"]:
+            if col in recs.columns:
+                recs[col] = recs[col].apply(to_python_type)
+
+        # Convertir DataFrame a lista de diccionarios
+        recs_list = recs.to_dict(orient='records')
+
+        # Convertir user_data a tipos nativos
+        user_data_python = {k: to_python_type(v) for k,v in user_data.items()}
+
         return jsonify({
-            "status":"success",
-            "id_user": id_user,
-            "cantidad_recomendaciones": len(recomendaciones),
-            "recomendaciones": recomendaciones.to_dict(orient='records'),
-            "user_data": user_data,
+            "status": "success",
+            "id_user": int(id_user),
+            "cantidad_recomendaciones": len(recs_list),
+            "recomendaciones": recs_list,
+            "user_data": user_data_python,
             "nivel": nivel,
-            "total_ejercicios": recommender.df.shape[0]
+            "total_ejercicios": int(recommender.df.shape[0])
         })
 
     except Exception as e:
         return jsonify({"status":"error","mensaje":str(e)}),500
 
 
-@app.route('/update', methods=['GET', 'POST'])
-def update():
-    # ------------------------
-    # Obtener datos
-    # ------------------------
-    if request.method == "POST":
-        data = request.json
-        if not data:
-            return jsonify({"status": "error", "mensaje": "Debe enviar datos JSON"}), 400
-        id_usuario = data.get("id_usuario")
-        genero = data.get("genero")
-        edad = data.get("edad")
-        peso = data.get("peso")
-        altura = data.get("altura")
-        id_ejercicio = data.get("id_ejercicio")
-        valoracion = data.get("valoracion")
-    else:  # GET
-        id_usuario = request.args.get("id_usuario")
-        genero = request.args.get("genero")
-        edad = request.args.get("edad")
-        peso = request.args.get("peso")
-        altura = request.args.get("altura")
-        id_ejercicio = request.args.get("id_ejercicio")
-        valoracion = request.args.get("valoracion")
 
-    # ------------------------
-    # Validar campos
-    # ------------------------
-    required_fields = [id_usuario, genero, edad, peso, altura, id_ejercicio, valoracion]
-    if not all(required_fields):
+
+@app.route('/update', methods=['GET','POST'])
+def update():
+    data = request.json if request.method=="POST" else request.args
+    id_usuario = data.get("id_usuario")
+    genero = data.get("genero")
+    edad = data.get("edad")
+    peso = data.get("peso")
+    altura = data.get("altura")
+    id_ejercicio = data.get("id_ejercicio")
+    valoracion = data.get("valoracion")
+
+    if not all([id_usuario, genero, edad, peso, altura, id_ejercicio, valoracion]):
         return jsonify({"status":"error","mensaje":"Faltan datos requeridos"}),400
 
     try:
-        # ------------------------
-        # Actualizar CSV
-        # ------------------------
         recommender.update_rating(id_usuario, genero, edad, peso, altura, id_ejercicio, valoracion)
-        # Recargar ratings_df y reentrenar
         recommender.ratings_df = pd.read_csv(recommender.user_rating)
         recommender.entrenar_modelo(force=True)
 
         return jsonify({
-            "status": "success",
-            "mensaje": "Valoración actualizada y modelo re-entrenado correctamente",
+            "status":"success",
+            "mensaje":"Valoración actualizada y modelo re-entrenado correctamente",
             "datos_recibidos": {
                 "id_usuario": id_usuario,
                 "genero": genero,
-                "edad": edad,
-                "peso": peso,
-                "altura": altura,
+                "edad": int(edad),
+                "peso": float(peso),
+                "altura": float(altura),
                 "id_ejercicio": id_ejercicio,
-                "valoracion": valoracion
+                "valoracion": float(valoracion)
             }
-        }), 200
-
+        })
     except Exception as e:
         return jsonify({"status":"error","mensaje":f"Error actualizando CSV o modelo: {str(e)}"}),500
 
-
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/login', methods=['GET','POST'])
 def login():
     dni = request.json.get("dni") if request.method=="POST" else request.args.get("dni")
     if not dni:
-        return jsonify({"status":"error", "mensaje":"Debe enviar el DNI"}), 400
+        return jsonify({"status":"error","mensaje":"Debe enviar el DNI"}),400
     try:
         usuarios = pd.read_csv(recommender.user_file)
         rating = pd.read_csv(recommender.user_rating)
     except Exception as e:
-        return jsonify({"status":"error", "mensaje":f"No se pudieron leer CSV: {str(e)}"}),500
+        return jsonify({"status":"error","mensaje":f"No se pudieron leer CSV: {str(e)}"}),500
 
     usuario = usuarios[usuarios['dni']==dni]
     if usuario.empty:
-        return jsonify({"status":"error", "mensaje":"Usuario no encontrado"}),404
+        return jsonify({"status":"error","mensaje":"Usuario no encontrado"}),404
 
     usuario_info = usuario[['id_user','nombre','apellido','dni']].iloc[0].to_dict()
     id_user = usuario_info['id_user']
-    user_ratings = rating[rating['id_user']==id_user]
-    usuario_info["ratings"] = user_ratings.to_dict(orient="records") if not user_ratings.empty else []
+    user_ratings = rating[rating['id_usuario']==id_user]
+
+    # Convertir tipos a nativos
+    ratings_list = []
+    for r in user_ratings.to_dict(orient="records"):
+        ratings_list.append({k: int(v) if isinstance(v, (np.integer, np.int64)) else float(v) if isinstance(v, (np.floating, np.float64)) else v for k,v in r.items()})
+
+    usuario_info["ratings"] = ratings_list
 
     return jsonify({"status":"success","usuario":usuario_info})
-
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status":"ok","mensaje":"API funcionando"}),200
 
-
 @app.route('/info', methods=['GET'])
 def info():
     return jsonify({
-        "total_ejercicios": recommender.df.shape[0] if recommender.df is not None else 0,
-        "total_usuarios": recommender.ratings_df["id_usuario"].nunique() if recommender.ratings_df is not None else 0,
+        "total_ejercicios": int(recommender.df.shape[0]) if recommender.df is not None else 0,
+        "total_usuarios": int(recommender.ratings_df["id_usuario"].nunique()) if recommender.ratings_df is not None else 0,
         "niveles_disponibles": recommender.df["Level"].unique().tolist() if recommender.df is not None else []
     })
-
 
 # ------------------------------
 # RUN APP
