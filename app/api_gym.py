@@ -242,7 +242,8 @@ class GymRecommender:
             if col in seleccion_df.columns:
                 seleccion_df[col] = seleccion_df[col].astype(float)
 
-        return seleccion_df[["Exercise_Name","muscles","Equipment","Level","rating_score","final_score"]]
+        return seleccion_df[["id_ejercicio","Exercise_Name","muscles","Equipment","Level","rating_score","final_score"]]
+
 
 # ------------------------------
 # FLASK APP
