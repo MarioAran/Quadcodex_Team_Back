@@ -1,4 +1,3 @@
-# app.py
 from flask import Flask, request, jsonify
 import os
 import csv
@@ -8,9 +7,7 @@ import numpy as np
 from sklearn.preprocessing import MultiLabelBinarizer, MinMaxScaler
 from sklearn.metrics.pairwise import cosine_similarity
 
-# ------------------------------
-# CLASE GYM RECOMMENDER
-# ------------------------------
+# Clase Gym Recommender
 class GymRecommender:
 
     MUSCLE_MAP = {
@@ -35,9 +32,7 @@ class GymRecommender:
         self.mlb = None
         self.feature_matrix = None
 
-    # ------------------------------
     # Limpieza de grupos musculares
-    # ------------------------------
     def normalize_muscle(self, x):
         x = str(x).lower()
         for k in self.MUSCLE_MAP:
@@ -55,15 +50,13 @@ class GymRecommender:
             return list(set([self.normalize_muscle(t) for t in tokens if self.normalize_muscle(t)]))
         return []
 
-    # ------------------------------
-    # Actualización de valoraciones
-    # ------------------------------
+    # Actualizacion de valoraciones
     def update_rating(self, id_usuario, genero, edad, peso, altura, id_ejercicio, valoracion):
         ratings_file = self.user_rating
         rows = []
         updated = False
 
-        # Leer CSV existente
+        # Leer CSV
         if os.path.exists(ratings_file):
             with open(ratings_file, "r", newline="", encoding="utf-8") as f:
                 reader = csv.reader(f)
@@ -77,7 +70,7 @@ class GymRecommender:
                         updated = True
                     rows.append(row)
 
-        # Agregar nuevo registro si no se actualizó
+        # Agregar nuevo registro si no se actualizo
         if not updated:
             rows.append([id_usuario, genero, edad, peso, altura, id_ejercicio, valoracion])
 
@@ -86,9 +79,7 @@ class GymRecommender:
             writer = csv.writer(f)
             writer.writerows(rows)
 
-    # ------------------------------
     # Entrenamiento del modelo
-    # ------------------------------
     def entrenar_modelo(self, force=False):
         mega_file = os.path.join(self.data_path, "megaGymDataset.csv")
         ratings_file = self.user_rating
@@ -120,7 +111,7 @@ class GymRecommender:
         self.df = self.df[self.df["muscles"].map(len) > 0].reset_index(drop=True)
         self.df["id_ejercicio"] = self.df.index.astype(int)
 
-        # Matriz de características de músculos
+        # Matriz de caracteristicas de musculos
         self.mlb = MultiLabelBinarizer()
         self.feature_matrix = self.mlb.fit_transform(self.df["muscles"])
 
@@ -143,9 +134,7 @@ class GymRecommender:
             }, f)
         print("### Modelo entrenado y guardado ✅")
 
-    # ------------------------------
-    # Recomendación de ejercicios
-    # ------------------------------
+    # Recomendacion de ejercicios
     def recomendar_ejercicios(self, user_data, nivel_usuario="Beginner", ejercicios_a_recomendar=15):
         if self.corrMatrix is None:
             raise Exception("Modelo no entrenado")
@@ -193,7 +182,7 @@ class GymRecommender:
         content_sim = cosine_similarity(self.feature_matrix, self.feature_matrix).mean(axis=1)
         df["content_sim"] = content_sim
 
-        # Combinación final
+        # Combinacion final
         scaler = MinMaxScaler()
         df["rating_norm"] = scaler.fit_transform(df[["rating_score"]])
         df["final_score"] = 0.5 * df["rating_norm"] + 0.5 * df["content_sim"]
@@ -237,7 +226,7 @@ class GymRecommender:
 
         seleccion_df = pd.DataFrame([r if isinstance(r,dict) else r.to_dict() for r in seleccion])
 
-        # Convertir columnas numéricas a tipos nativos
+        # Convertir columnas numericas a tipos nativos
         for col in ["rating_score","final_score"]:
             if col in seleccion_df.columns:
                 seleccion_df[col] = seleccion_df[col].astype(float)
@@ -245,16 +234,12 @@ class GymRecommender:
         return seleccion_df[["id_ejercicio","Exercise_Name","muscles","Equipment","Level","rating_score","final_score"]]
 
 
-# ------------------------------
-# FLASK APP
-# ------------------------------
+# Flask App
 app = Flask(__name__)
 recommender = GymRecommender()
 recommender.entrenar_modelo(force=False)
 
-# ------------------------------
-# ENDPOINTS
-# ------------------------------
+# EEndpoints
 @app.route('/')
 def index():
     return "API de Recomendación de Ejercicios Gym OK"
@@ -287,9 +272,7 @@ def recomendar():
             "altura": user_ratings['altura'].iloc[0]
         }
 
-        # ======================
-        # Función para convertir tipos numpy a nativos
-        # ======================
+        # Funcion para convertir tipos numpy a nativos
         def to_python_type(val):
             if isinstance(val, (np.integer, np.int64)):
                 return int(val)
@@ -306,7 +289,7 @@ def recomendar():
             ejercicios_a_recomendar=cantidad
         )
 
-        # Convertir columnas numéricas a tipos nativos
+        # Convertir columnas numericas a tipos nativos
         recs = recs.copy()
         for col in ["rating_score","final_score"]:
             if col in recs.columns:
@@ -330,9 +313,6 @@ def recomendar():
 
     except Exception as e:
         return jsonify({"status":"error","mensaje":str(e)}),500
-
-
-
 
 @app.route('/update', methods=['GET','POST'])
 def update():
@@ -409,8 +389,6 @@ def info():
         "niveles_disponibles": recommender.df["Level"].unique().tolist() if recommender.df is not None else []
     })
 
-# ------------------------------
-# RUN APP
-# ------------------------------
+# Activar la app
 if __name__=='__main__':
     app.run(debug=True, port=5000)
