@@ -10,6 +10,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 # Clase Gym Recommender
 class GymRecommender:
 
+    # Mapeo de musculos
     MUSCLE_MAP = {
         "abs": "abs", "abdominals": "abs", "core": "abs",
         "quadriceps": "legs", "quads": "legs", "hamstrings": "legs",
@@ -239,7 +240,7 @@ app = Flask(__name__)
 recommender = GymRecommender()
 recommender.entrenar_modelo(force=False)
 
-# EEndpoints
+# Endpoints
 @app.route('/')
 def index():
     return "API de Recomendación de Ejercicios Gym OK"
@@ -263,7 +264,9 @@ def recomendar():
         if id_user not in recommender.ratings_df['id_usuario'].values:
             return jsonify({"status":"error","mensaje":"Usuario no tiene datos de ratings"}), 404
 
-        user_ratings = recommender.ratings_df[recommender.ratings_df['id_usuario']==id_user]
+        user_ratings = recommender.ratings_df[recommender.ratings_df['id_usuario']==id_user] # Valoraciones del usuario
+
+        # Diccionario de datos 
         user_data = {
             "id_usuario": id_user,
             "genero": user_ratings['genero'].iloc[0],
@@ -301,6 +304,7 @@ def recomendar():
         # Convertir user_data a tipos nativos
         user_data_python = {k: to_python_type(v) for k,v in user_data.items()}
 
+        # json de salida
         return jsonify({
             "status": "success",
             "id_user": int(id_user),
@@ -316,6 +320,7 @@ def recomendar():
 
 @app.route('/update', methods=['GET','POST'])
 def update():
+    # Datos
     data = request.json if request.method=="POST" else request.args
     id_usuario = data.get("id_usuario")
     genero = data.get("genero")
@@ -329,10 +334,12 @@ def update():
         return jsonify({"status":"error","mensaje":"Faltan datos requeridos"}),400
 
     try:
+        # Guardar y forzar entrenamiento
         recommender.update_rating(id_usuario, genero, edad, peso, altura, id_ejercicio, valoracion)
         recommender.ratings_df = pd.read_csv(recommender.user_rating)
         recommender.entrenar_modelo(force=True)
 
+        # json de salida
         return jsonify({
             "status":"success",
             "mensaje":"Valoración actualizada y modelo re-entrenado correctamente",
@@ -346,6 +353,7 @@ def update():
                 "valoracion": float(valoracion)
             }
         })
+    
     except Exception as e:
         return jsonify({"status":"error","mensaje":f"Error actualizando CSV o modelo: {str(e)}"}),500
 
@@ -355,15 +363,17 @@ def login():
     if not dni:
         return jsonify({"status":"error","mensaje":"Debe enviar el DNI"}),400
     try:
+        # Leer los datos de los CSV
         usuarios = pd.read_csv(recommender.user_file)
         rating = pd.read_csv(recommender.user_rating)
     except Exception as e:
         return jsonify({"status":"error","mensaje":f"No se pudieron leer CSV: {str(e)}"}),500
 
-    usuario = usuarios[usuarios['dni']==dni]
+    usuario = usuarios[usuarios['dni']==dni] # Busqueda por DNI
     if usuario.empty:
         return jsonify({"status":"error","mensaje":"Usuario no encontrado"}),404
 
+    # Toma de info del usuario
     usuario_info = usuario[['id_user','nombre','apellido','dni']].iloc[0].to_dict()
     id_user = usuario_info['id_user']
     user_ratings = rating[rating['id_usuario']==id_user]
@@ -379,10 +389,11 @@ def login():
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status":"ok","mensaje":"API funcionando"}),200
+    return jsonify({"status":"ok","mensaje":"API funcionando"}),200 # Lamada para ver si la API/Render funciona
 
 @app.route('/info', methods=['GET'])
 def info():
+    # json de salida
     return jsonify({
         "total_ejercicios": int(recommender.df.shape[0]) if recommender.df is not None else 0,
         "total_usuarios": int(recommender.ratings_df["id_usuario"].nunique()) if recommender.ratings_df is not None else 0,
