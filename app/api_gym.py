@@ -1,3 +1,4 @@
+import threading
 from flask import Flask, request, jsonify
 import os
 import csv
@@ -235,19 +236,32 @@ class GymRecommender:
         return seleccion_df[["id_ejercicio","Exercise_Name","muscles","Equipment","Level","rating_score","final_score"]]
 
 
+
 # Flask App
 app = Flask(__name__)
 recommender = GymRecommender()
-recommender.entrenar_modelo(force=False)
+threading.Thread(target=recommender.entrenar_modelo(),kwargs={"force":False},daemon=True).start()
+
+
+
 
 # Endpoints
 @app.route('/')
 def index():
     return "API de Recomendación de Ejercicios Gym OK"
 
+def retrain_model():
+    recommender.entrenar_modelo(force=True)
+    threading.Thread(target=retrain_model, daemon=True).start()
+
 @app.route('/recomendar', methods=['GET','POST'])
 def recomendar():
     try:
+        
+        if recommender.corrMatrix is None:
+            return jsonify({"status": "error", "mensaje": "Modelo aún no entrenado"}), 503
+
+
         if recommender.ratings_df.empty:
             return jsonify({"status":"error","mensaje":"No hay datos de ratings"}), 500
 
@@ -402,4 +416,4 @@ def info():
 
 # Activar la app
 if __name__=='__main__':
-    app.run(debug=True, port=5000)
+    app.run(host="0.0.0.0",port=5000,use_reloader=False)

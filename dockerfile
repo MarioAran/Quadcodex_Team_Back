@@ -2,7 +2,7 @@
 FROM python:3.10-slim
 
 # Crear directorio de la app
-WORKDIR /app
+WORKDIR /gym_app
 
 # Copiar dependencias y data
 COPY requirements.txt .
