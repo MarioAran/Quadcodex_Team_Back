@@ -235,15 +235,19 @@ class GymRecommender:
 
         return seleccion_df[["id_ejercicio","Exercise_Name","muscles","Equipment","Level","rating_score","final_score"]]
 
-
-
 # Flask App
 app = Flask(__name__)
 recommender = GymRecommender()
-threading.Thread(target=recommender.entrenar_modelo(),kwargs={"force":False},daemon=True).start()
+def iniciar_modelo():
+    try:
+        print("Iniciando entrenamiento del modelo en background...")
+        recommender.entrenar_modelo(force=False)
+        print("✅ Modelo cargado/entrenado exitosamente")
+    except Exception as e:
+        print(f"❌ Error entrenando modelo: {e}")
 
-
-
+modelo_thread = threading.Thread(target=iniciar_modelo, daemon=True)
+modelo_thread.start()
 
 # Endpoints
 @app.route('/')
@@ -416,4 +420,5 @@ def info():
 
 # Activar la app
 if __name__=='__main__':
-    app.run(host="0.0.0.0",port=5000,use_reloader=False)
+    app.run(host="0.0.0.0",port=5000,debug=False,threaded=True    
+)
