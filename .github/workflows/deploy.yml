@@ -1,0 +1,20 @@
+name: CI/CD Gym api
+
+on:
+  push:
+    branches: [main]
+
+jobs: 
+  build:
+    runs-on: ubuntu-latest
+
+    steps: 
+    - name: checkout
+      uses: actions/checkout@v3
+    
+    - name: Build Docker Image
+      run: docker build -t gym-api .
+
+    - name: Test Container
+      run: docker run -d -p 5000:5000 gym-api 
+  
