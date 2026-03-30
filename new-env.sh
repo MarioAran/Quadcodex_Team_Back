@@ -1,24 +1,24 @@
-#!/bin/bash
-# new.sh: inicializa el entorno y arranca Flask
-ENV_PATH="./app/.env"
-if [ ! -d "$ENV_PATH" ]; then
-    echo "Creando entorno virtual en $ENV_PATH..."
-    python3.10 -m venv "$ENV_PATH"
-fi
-echo "Activando entorno virtual..."
-# Detectar si es Windows o Linux/Mac
-if [ -f "$ENV_PATH/Scripts/activate" ]; then
-    source "$ENV_PATH/Scripts/activate"
-else
-    source "$ENV_PATH/bin/activate"
-fi
+FROM python:3.10-slim
 
-echo "Instalando dependencias..."
-pip install --upgrade pip
-pip install -r requirements.txt
+# Crear directorio de trabajo
+WORKDIR /app
 
-export FLASK_APP=./app/api_gym.py
-export FLASK_ENV=development
+# Copiar dependencias
+COPY requirements.txt .
 
-echo "Iniciando Flask..."
-flask run
+# Instalar dependencias
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copiar código
+COPY . .
+
+# Variables de entorno
+ENV FLASK_APP=app/api_gym.py
+ENV FLASK_RUN_HOST=0.0.0.0
+
+# Exponer puerto
+EXPOSE 5000
+
+# Comando de arranque
+CMD ["flask", "run"]
